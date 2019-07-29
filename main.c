@@ -29,7 +29,14 @@ struct kvm {
   struct kvm_regs regs;
 };
 
+struct ivt_entry {
+  uint16_t offset;
+  uint16_t segment;
+};
+
 struct kvm kvm;
+
+struct ivt_entry ivt[256];
 
 void kvm_init(void) {
   kvm.fd = open("/dev/kvm", O_RDWR);
@@ -86,7 +93,7 @@ void kvm_handle_io(void) {
 void kvm_print_regs(void) {
   if(ioctl(kvm.vcpu, KVM_GET_REGS, &kvm.regs) < 0) die();
 
-  printf("    eax 0x%08llx    ecx 0x%08llx    edx 0x%08llx    ebx 0x%08llx\n"
+  printf("\n    eax 0x%08llx    ecx 0x%08llx    edx 0x%08llx    ebx 0x%08llx\n"
       "    esp 0x%08llx    ebp 0x%08llx    esi 0x%08llx    edi 0x%08llx\n"
       "    eip 0x%08llx eflags 0x%08llx\n",
       kvm.regs.rax, kvm.regs.rcx, kvm.regs.rdx, kvm.regs.rbx,
@@ -110,6 +117,19 @@ void kvm_run(void) {
   }
 }
 
+void bios_init(void) {
+  uint8_t* memory = (uint8_t*)kvm.memory_region.userspace_addr;
+
+  for(size_t i = 0; i < 256; ++i) {
+    ivt[i].offset = 0x400;
+    ivt[i].segment = 0;
+  }
+
+  memcpy(memory, ivt, sizeof(ivt));
+
+  memory[0x400] = 0xcf; // iret
+}
+
 void load_binary(const char* filename) {
   const int fd = open(filename, O_RDONLY);
   if(fd < 0) die();
@@ -117,14 +137,15 @@ void load_binary(const char* filename) {
   uint8_t* buf = (uint8_t*)kvm.memory_region.userspace_addr + 0x7c00;
 
   ssize_t count;
-  while((count = read(fd, buf, 0x10000)) > 0)
+  while((count = read(fd, buf, 512)) > 0)
     buf += count;
 }
 
 int main(void) {
   kvm_init();
+  bios_init();
 
-  load_binary("tests/call.bin");
+  load_binary("tests/int.bin");
 
   if(ioctl(kvm.vcpu, KVM_GET_SREGS, &kvm.sregs) < 0) die();
   kvm.sregs.cs.selector = 0;
