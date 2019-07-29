@@ -2,6 +2,7 @@
 #include <linux/kvm.h>
 #include <sys/ioctl.h>
 #include <sys/mman.h>
+#include <unistd.h>
 
 #include <stdarg.h>
 #include <stdint.h>
@@ -54,6 +55,23 @@ void kvm_init(void) {
       kvm.vcpu,
       0);
   if(kvm.run == MAP_FAILED) die();
+
+  const size_t memory_size = 0x100000; // 1 MB.
+  const void* const memory = mmap(NULL,
+      memory_size,
+      PROT_READ | PROT_WRITE,
+      // Zeroed mapping without swap.
+      MAP_PRIVATE | MAP_ANONYMOUS | MAP_NORESERVE,
+      // Ignored because of `MAP_ANONYMOUS`.
+      -1,
+      // Ignored because of `MAP_ANONYMOUS`.
+      0);
+  if(memory == MAP_FAILED) die();
+
+  kvm.memory_region.memory_size = memory_size;
+  kvm.memory_region.userspace_addr = (uintptr_t)memory;
+  if(ioctl(kvm.vm, KVM_SET_USER_MEMORY_REGION, &kvm.memory_region) < 0)
+    die();
 }
 
 void kvm_handle_io(void) {
@@ -62,21 +80,6 @@ void kvm_handle_io(void) {
       && kvm.run->io.port == 0x3f8
       && kvm.run->io.count == 1) {
     printf("out: %c\n", *((char*)kvm.run + kvm.run->io.data_offset));
-  }
-}
-
-void kvm_handle_debug(void) { }
-
-void kvm_run(void) {
-  while(1) {
-    if(ioctl(kvm.vcpu, KVM_RUN, 0) < 0) die();
-
-    switch(kvm.run->exit_reason) {
-    case KVM_EXIT_IO:     kvm_handle_io();    break;
-    case KVM_EXIT_DEBUG:  kvm_handle_debug(); break;
-    case KVM_EXIT_HLT:    return;
-    default: die();
-    }
   }
 }
 
@@ -91,35 +94,44 @@ void kvm_print_regs(void) {
       kvm.regs.rip, kvm.regs.rflags);
 }
 
+void kvm_run(void) {
+  while(1) {
+    if(ioctl(kvm.vcpu, KVM_RUN, 0) < 0) {
+      perror("run");
+      die();
+    }
+
+    switch(kvm.run->exit_reason) {
+    case KVM_EXIT_IO:     kvm_handle_io();  break;
+    case KVM_EXIT_DEBUG:  kvm_print_regs(); break;
+    case KVM_EXIT_HLT:    return;
+    default: die();
+    }
+  }
+}
+
+void load_binary(const char* filename) {
+  const int fd = open(filename, O_RDONLY);
+  if(fd < 0) die();
+
+  uint8_t* buf = (uint8_t*)kvm.memory_region.userspace_addr + 0x7c00;
+
+  ssize_t count;
+  while((count = read(fd, buf, 0x10000)) > 0)
+    buf += count;
+}
+
 int main(void) {
   kvm_init();
 
-  const int test_fd = open("tests/out.bin", O_RDONLY);
-  if(test_fd < 0) die();
-
-  const size_t memory_size = 0x10000;
-  uint8_t* const memory = mmap(NULL,
-      memory_size,
-      PROT_READ | PROT_WRITE,
-      // Zeroed mapping without swap.
-      MAP_PRIVATE | MAP_NORESERVE,
-      test_fd,
-      0);
-  if(memory == MAP_FAILED) die();
-
-  madvise(memory, memory_size, MADV_MERGEABLE);
-
-  kvm.memory_region.memory_size = memory_size;
-  kvm.memory_region.userspace_addr = (uintptr_t)memory;
-  if(ioctl(kvm.vm, KVM_SET_USER_MEMORY_REGION, &kvm.memory_region) < 0)
-    die();
+  load_binary("tests/call.bin");
 
   if(ioctl(kvm.vcpu, KVM_GET_SREGS, &kvm.sregs) < 0) die();
   kvm.sregs.cs.selector = 0;
   kvm.sregs.cs.base = 0;
   if(ioctl(kvm.vcpu, KVM_SET_SREGS, &kvm.sregs) < 0) die();
 
-  kvm.regs.rip = 0;
+  kvm.regs.rip = 0x7c00;
   if(ioctl(kvm.vcpu, KVM_SET_REGS, &kvm.regs) < 0) die();
 
   kvm_print_regs();
