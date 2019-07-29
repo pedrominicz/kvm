@@ -1,0 +1,5 @@
+#!/bin/sh
+
+gcc -pedantic -Wall -Wextra -Werror main.c || exit
+./a.out
+rm -f a.out
