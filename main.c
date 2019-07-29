@@ -36,8 +36,7 @@ void kvm_init(void) {
 
   // Assert correct `KVM_API_VERSION`.
   const int api_version = ioctl(kvm.fd, KVM_GET_API_VERSION, 0);
-  if(api_version < 0) die();
-  if(api_version != KVM_API_VERSION) die();
+  if(api_version < 0 || api_version != KVM_API_VERSION) die();
 
   kvm.vm = ioctl(kvm.fd, KVM_CREATE_VM, 0);
   if(kvm.vm < 0) die();
@@ -48,8 +47,7 @@ void kvm_init(void) {
   const int vcpu_mmap_size = ioctl(kvm.fd, KVM_GET_VCPU_MMAP_SIZE, 0);
   if(vcpu_mmap_size <= 0) die();
 
-  kvm.run = mmap(
-      NULL,
+  kvm.run = mmap(NULL,
       vcpu_mmap_size,
       PROT_READ | PROT_WRITE,
       MAP_SHARED,
@@ -58,12 +56,25 @@ void kvm_init(void) {
   if(kvm.run == MAP_FAILED) die();
 }
 
+void kvm_handle_io(void) {
+  if(kvm.run->io.direction == KVM_EXIT_IO_OUT
+      && kvm.run->io.size == 1
+      && kvm.run->io.port == 0x3f8
+      && kvm.run->io.count == 1) {
+    printf("out: %c\n", *((char*)kvm.run + kvm.run->io.data_offset));
+  }
+}
+
+void kvm_handle_debug(void) { }
+
 void kvm_run(void) {
   while(1) {
     if(ioctl(kvm.vcpu, KVM_RUN, 0) < 0) die();
 
     switch(kvm.run->exit_reason) {
-    case KVM_EXIT_HLT: return;
+    case KVM_EXIT_IO:     kvm_handle_io();    break;
+    case KVM_EXIT_DEBUG:  kvm_handle_debug(); break;
+    case KVM_EXIT_HLT:    return;
     default: die();
     }
   }
@@ -83,12 +94,11 @@ void kvm_print_regs(void) {
 int main(void) {
   kvm_init();
 
-  const int test_fd = open("tests/hlt.bin", O_RDONLY);
+  const int test_fd = open("tests/out.bin", O_RDONLY);
   if(test_fd < 0) die();
 
   const size_t memory_size = 0x10000;
-  uint8_t* const memory = mmap(
-      NULL,
+  uint8_t* const memory = mmap(NULL,
       memory_size,
       PROT_READ | PROT_WRITE,
       // Zeroed mapping without swap.

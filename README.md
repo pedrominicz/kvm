@@ -4,4 +4,8 @@
 
 https://github.com/dpw/kvm-hello-world
 
-https://git.suckless.org/dwm/file/util.c.html
+https://lwn.net/Articles/658511/
+
+https://lwn.net/Articles/658512/
+
+https://www.kernel.org/doc/Documentation/virtual/kvm/api.txt
