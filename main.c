@@ -172,5 +172,12 @@ int main(void) {
 
   kvm_print_regs();
 
+  uint8_t* memory = (uint8_t*)kvm.memory_region.userspace_addr;
+
+  for(size_t i = 0; i < 128; ++i) {
+    if(i % 16 == 0) putchar('\n');
+    printf("%02x ", memory[i]);
+  }
+
   return 0;
 }
