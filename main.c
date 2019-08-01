@@ -156,7 +156,7 @@ int main(void) {
   kvm_init();
 
   load_bios("bios/bios.bin");
-  load_binary("tests/out.bin");
+  load_binary("tests/frame.bin");
 
   if(ioctl(kvm.vcpu, KVM_GET_SREGS, &kvm.sregs) < 0) die();
   kvm.sregs.cs.selector = 0xf000;
