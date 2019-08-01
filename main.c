@@ -63,8 +63,8 @@ void kvm_init(void) {
       0);
   if(kvm.run == MAP_FAILED) die();
 
-  const size_t memory_size = 0x100000; // 1 MB.
-  const void* const memory = mmap(NULL,
+  const size_t memory_size = 0x100000; // 1MB.
+  void* const memory = mmap(NULL,
       memory_size,
       PROT_READ | PROT_WRITE,
       // Zeroed mapping without swap.
@@ -112,12 +112,17 @@ void kvm_run(void) {
     case KVM_EXIT_IO:     kvm_handle_io();  break;
     case KVM_EXIT_DEBUG:  kvm_print_regs(); break;
     case KVM_EXIT_HLT:    return;
-    default: die();
+    default:
+      printf("exit_reason: %d\n", kvm.run->exit_reason);
+      die();
     }
   }
 }
 
-void bios_init(void) {
+void load_bios(const char* filename) {
+  const int fd = open(filename, O_RDONLY);
+  if(fd < 0) die();
+
   uint8_t* memory = (uint8_t*)kvm.memory_region.userspace_addr;
 
   for(size_t i = 0; i < 256; ++i) {
@@ -128,6 +133,12 @@ void bios_init(void) {
   memcpy(memory, ivt, sizeof(ivt));
 
   memory[0x400] = 0xcf; // iret
+
+  memory += 0xf0000;
+
+  ssize_t count;
+  while((count = read(fd, memory, 512)) > 0)
+    memory += count;
 }
 
 void load_binary(const char* filename) {
@@ -143,16 +154,16 @@ void load_binary(const char* filename) {
 
 int main(void) {
   kvm_init();
-  bios_init();
 
-  load_binary("tests/int.bin");
+  load_bios("bios/bios.bin");
+  load_binary("tests/out.bin");
 
   if(ioctl(kvm.vcpu, KVM_GET_SREGS, &kvm.sregs) < 0) die();
-  kvm.sregs.cs.selector = 0;
-  kvm.sregs.cs.base = 0;
+  kvm.sregs.cs.selector = 0xf000;
+  kvm.sregs.cs.base = 0xf000;
   if(ioctl(kvm.vcpu, KVM_SET_SREGS, &kvm.sregs) < 0) die();
 
-  kvm.regs.rip = 0x7c00;
+  kvm.regs.rip = 0;
   if(ioctl(kvm.vcpu, KVM_SET_REGS, &kvm.regs) < 0) die();
 
   kvm_print_regs();
